@@ -527,15 +527,17 @@ void clustering(const Option &option, Data &data) {
     data.result.resize(readsCount);
     cudaMemcpy(data.result.data(), cluster, sizeof(int32_t)*readsCount, DTH);
     cudaFree(data.readsD);
-    cudaFreeHost(data.readsH);
     cudaFree(data.bufferD);
-    cudaFreeHost(data.bufferH);
     cudaFree(cluster);
     cudaFree(remains);
     cudaFree(jobs);
     cudaFree(represent);
   }
 }
+
+char table2[4] = {'A', 'C', 'G', 'T'};
+char table5[28] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '*', '-'};
 
 void saveResult(Option &option, Data &data) {
   int32_t readsCount = data.readsCount;  // 序列数
@@ -554,11 +556,10 @@ void saveResult(Option &option, Data &data) {
   {  // 保存结果
     std::vector<int32_t> offsets(readsCount+1);  // 每个序列的偏移
     for (int32_t i=0; i<readsCount; i++) {
-      offsets[data.result[i]+1] += data.nameLengths[i];
-      offsets[data.result[i]+1] += data.result[i]==i?1:3;
+      offsets[data.result[i]+1] += data.nameLengths[i]+1;
+      offsets[data.result[i]+1] += data.result[i]==i?data.readLengths[i]+1:2;
     }
     for (int32_t i=1; i<readsCount+1; i++) offsets[i] += offsets[i-1];
-    std::string name;  // 要写入的name
     if (option.rank == 0) {  // 保证文件存在
       std::ofstream resultFile(option.resultFile);
       resultFile << "\n";
@@ -566,23 +567,40 @@ void saveResult(Option &option, Data &data) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
     std::ofstream resultFile(option.resultFile, std::ios::in);  // 保存结果
+    std::string name;  // 要写入的name
+    std::string read;  // 要写入的read
+    int32_t entropy = data.type==0?2:5;  // 熵
     for (int32_t i=0; i<data.readsCount; i++) {
-      if (data.result[i] == i) {  // 是代表序列
-        if (i%option.size == option.rank) {  // 序列名存储在当前节点
+      if (i%option.size == option.rank) {  // 序列在当前节点
+        if (data.result[i] == i) {  // 是代表序列
           resultFile.seekp(offsets[data.result[i]], std::ios::beg);
           name = data.names[i]+"\n";
           resultFile.write(name.data(), name.size());
+          read.clear();  // 解码序列数据
+          for (int32_t l=0; l<data.readsH[i][1]; l++) {
+            uint32_t word = 0;
+            for (int32_t e=0; e<entropy; e++) {
+              word += (data.readsH[i][2+l/32*entropy+e]>>(l%32)&1)<<e;
+            }
+            if (entropy == 2) read.push_back(table2[word]);
+            if (entropy == 5) read.push_back(table5[word]);
+          }
+          for (int32_t l=data.readsH[i][1]; l<data.readsH[i][0]; l++) {
+            read.push_back('N');
+          }
+          read.push_back('\n');
+          resultFile.write(read.data(), read.size());
+        } else {  // 不是代表序列
+            resultFile.seekp(offsets[data.result[i]], std::ios::beg);
+            name = "  "+data.names[i]+"\n";
+            resultFile.write(name.data(), name.size());
         }
-        offsets[data.result[i]] += data.nameLengths[i]+1;
-      } else {  // 不是代表序列
-        if (i%option.size == option.rank) {  // 序列名存储在当前节点
-          resultFile.seekp(offsets[data.result[i]], std::ios::beg);
-          name = "  "+data.names[i]+"\n";
-          resultFile.write(name.data(), name.size());
-        }
-        offsets[data.result[i]] += data.nameLengths[i]+3;
       }
+      offsets[data.result[i]] += data.nameLengths[i]+1;
+      offsets[data.result[i]] += data.result[i]==i?data.readLengths[i]+1:2;
     }
     resultFile.close();
   }
+  cudaFreeHost(data.readsH);
+  cudaFreeHost(data.bufferH);
 }
