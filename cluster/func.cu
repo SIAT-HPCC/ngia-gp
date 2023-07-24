@@ -554,7 +554,7 @@ void saveResult(Option &option, Data &data) {
     std::cout << "cluster:\t" << sum << "\n";
   }
   {  // 保存结果
-    std::vector<int32_t> offsets(readsCount+1);  // 每个序列的偏移
+    std::vector<int64_t> offsets(readsCount+1);  // 每个序列的偏移
     for (int32_t i=0; i<readsCount; i++) {
       offsets[data.result[i]+1] += data.nameLengths[i]+1;
       offsets[data.result[i]+1] += data.result[i]==i?data.readLengths[i]+1:2;
